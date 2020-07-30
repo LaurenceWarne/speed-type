@@ -496,7 +496,11 @@ to (point-min) and (point-max)"
 (defun speed-type--get-code-candidates-json (language-id search-term)
   "Return a list of code snippets and information about them.
 
-A GET request is sent to the url SPEED-TYPE-CODE-URL, with LANGUAGE-ID as the query parameter for 'lan', and SEARCH-TERM as the query parameter for 'q'.  A list of code snippets is then returned from the responding json."
+A GET request is sent to the url SPEED-TYPE-CODE-URL, with LANGUAGE-ID as
+the query parameter for 'lan', and SEARCH-TERM as the query parameter for 'q'.
+
+A list of code snippets is then returned from the responding json, or nil if
+no results were found."
   (let* ((gnutls-log-level 1)  ; https://debbugs.gnu.org/cgi/bugreport.cgi?bug=34341
 	 (url-request-method "GET")
 	 (raw-url (concat speed-type-code-url "?q=" search-term "&per_page" "50"
@@ -593,21 +597,21 @@ If the user chooses to play again use SEARCH-TERM."
   "Speed type a random code snippet of the specified LANGUAGE."
   (interactive "sChoose a programming language: ")
   ;; A query term must always be specified
-  (speed-type-code-search-term language (char-to-string (seq-random-elt "aeiou"))))
+  (speed-type-code-search-term language "code"))  ;; 'code' is our catchall term
 
 ;;;###autoload
 (defun speed-type-code-search-term (language search-term)
   "Speed type a code snippet of LANGUAGE obtained from searcing SEARCH-TERM."
   (interactive "sChoose a programming language: \nsChoose a search term: ")
-  (let* ((language-id (gethash (downcase language) speed-type--language-to-id-map))
-	 (result (if language-id
-		     (seq-random-elt
-		      (speed-type--get-code-candidates-json language-id search-term))
-		   (message "Language %s is not currently supported" language)
-		   nil)))
-    (when result
-      (speed-type--setup-code
-       (speed-type--get-text-from-code-candidate result) language search-term))))
+  (let ((language-id (gethash (downcase language) speed-type--language-to-id-map)))
+    (if (not language-id)
+        (message "Language %s is not currently supported" language)
+      (let ((code-results (speed-type--get-code-candidates-json language-id search-term)))
+        (if code-results
+            (speed-type--setup-code
+             (speed-type--get-text-from-code-candidate (seq-random-elt code-results))
+             language search-term)
+          (message "No results found for %s using the search term '%s'" language search-term))))))
 
 ;;;###autoload
 (defun speed-type-top-x (n)

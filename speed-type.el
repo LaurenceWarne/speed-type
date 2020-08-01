@@ -557,7 +557,7 @@ returned if no appropriate data could be found."
 	(set-syntax-table found-syntax-table)
       (message "No appropriate syntax table could be found for: %s. If you find the correct syntax table for this language you can add it to the hash-table speed-type-syntax-tables. Alternatively, you may just need to load the language library, e.g. (require 'python)." language))))
 
-(defun speed-type--setup-code (text language search-term)
+(defun speed-type--setup-code (text language search-term &optional font-lock-kw)
   "Speed type the code snippet TEXT of language LANGUAGE.
 If the user chooses to play again use SEARCH-TERM."
   (let ((callback (lambda ()
@@ -567,14 +567,12 @@ If the user chooses to play again use SEARCH-TERM."
       (setq speed-type--programming-lan language)
       (setq speed-type--search-term search-term)
       (speed-type--setup-syntax-table language)
-      (let ((font-lock-data
-	     (speed-type--get-language-code-keywords language)))
-	(if font-lock-data
+      (let ((font-lock-data (or font-lock-kw (speed-type--get-language-code-keywords language))))
+	(if (or font-lock-kw (speed-type--get-language-code-keywords language))
 	    (let ((font-lock-defaults font-lock-data))
 	      (ignore-errors (font-lock-ensure)))  ; Fontify buffer
-	  (message "No syntax highlighting data could be found for: %s"
-		   language))))))
-  (speed-type--setup text nil nil nil nil callback)))
+	  (message "No syntax highlighting data could be found for: %s" language))))))
+    (speed-type--setup text nil nil nil nil callback)))
 
 ;;;###autoload
 (defun speed-type-code-tab ()
@@ -612,6 +610,14 @@ If the user chooses to play again use SEARCH-TERM."
              (speed-type--get-text-from-code-candidate (seq-random-elt code-results))
              language search-term)
           (message "No results found for %s using the search term '%s'" language search-term))))))
+
+;;;###autoload
+(defun speed-type-code-region (start end)
+  "Open copy of [START,END] in a new buffer to speed type the code."
+  (interactive "r")
+  (speed-type--setup-code (buffer-substring-no-properties start end)
+                          "?"
+                          font-lock-keywords))
 
 ;;;###autoload
 (defun speed-type-top-x (n)

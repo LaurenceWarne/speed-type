@@ -1,4 +1,4 @@
-;;; speed-type.el --- Practice touch and speed typing
+;;; speed-type.el --- Practice touch and speed typing -*- lexical-binding: t -*-
 
 ;; Copyright (C) 2015 Gunther Hagleitner
 
@@ -187,6 +187,8 @@ Total errors: %d
 (defvar-local speed-type--opened-on-buffer nil)
 (defvar-local speed-type--programming-lan nil)
 (defvar-local speed-type--search-term nil)
+(defvar-local speed-type--go-next-fn nil)
+(defvar-local speed-type--replay-fn (lambda (text) (speed-type--setup text)))
 
 ;; save-mark-and-excursion in Emacs 25.1 and above works like save-excursion did before
 (eval-when-compile
@@ -323,26 +325,27 @@ Accuracy is computed as (CORRECT-ENTRIES - CORRECTIONS) / TOTAL-ENTRIES."
 (defun speed-type--replay ()
   "Replay a speed-type session."
   (interactive)
-  (let ((text speed-type--orig-text)
-	(speed-type-pl speed-type--programming-lan)
-	(speed-type-search speed-type--search-term))
-    (kill-this-buffer)
-    (if speed-type-pl (speed-type--setup-code text speed-type-pl speed-type-search)
-      (speed-type--setup text))))
+  (when speed-type--replay-fn
+    (let ((opened-on-buffer speed-type--opened-on-buffer)
+          (fn speed-type--replay-fn)
+          (text speed-type--orig-text))
+      (kill-this-buffer)
+      (if (bufferp opened-on-buffer)
+          (with-current-buffer opened-on-buffer (funcall fn text))
+        (funcall fn text)))))
 
 (defun speed-type--play-next ()
   "Play a new speed-type session, based on the current one."
   (interactive)
   (let ((opened-on-buffer speed-type--opened-on-buffer)
-	(speed-type-pl speed-type--programming-lan)
-	(speed-type-search speed-type--search-term)
+        (fn speed-type--go-next-fn)
         (lang speed-type--lang)
         (n speed-type--n-words))
     (kill-this-buffer)
-    (cond (opened-on-buffer (with-current-buffer opened-on-buffer (speed-type-buffer nil)))
-	  (speed-type-pl (speed-type-code-search-term speed-type-pl speed-type-search))
-	  ((and lang n) (let ((speed-type-default-lang lang)) (speed-type-top-x n)))
-	  (t (speed-type-text)))))
+    (cond (fn (funcall fn))
+          (opened-on-buffer (with-current-buffer opened-on-buffer (speed-type-buffer nil)))
+          ((and lang n) (let ((speed-type-default-lang lang)) (speed-type-top-x n)))
+          (t (speed-type-text)))))
 
 (defun speed-type--handle-complete ()
   "Remove typing hooks from the buffer and print statistics."
@@ -364,8 +367,8 @@ Accuracy is computed as (CORRECT-ENTRIES - CORRECTIONS) / TOTAL-ENTRIES."
   (insert "\n\n")
   (insert (format "    [%s]uit\n"
                   (propertize "q" 'face 'highlight)))
-  (insert (format "    [%s]eplay this sample\n"
-                  (propertize "r" 'face 'highlight)))
+  (when speed-type--replay-fn (insert (format "    [%s]eplay this sample\n"
+                                              (propertize "r" 'face 'highlight))))
   (insert (format "    [%s]ext random sample\n"
                   (propertize "n" 'face 'highlight)))
   (read-only-mode)
@@ -424,7 +427,8 @@ are color coded and stats are gathered about the typing performance."
                             ""
                             str))
 
-(defun speed-type--setup (text &optional author title lang n-words callback)
+(defun speed-type--setup
+    (text &optional author title lang n-words callback)
   "Set up a new buffer for the typing exercise on TEXT.
 
 AUTHOR and TITLE can be given, this happen when the text to type comes
@@ -537,8 +541,8 @@ returned if no appropriate data could be found."
 	  ((boundp (intern keywords-3)) (list (symbol-value (intern keywords-3))))
 	  (t nil))))
 
-(defun speed-type--get-language-syntax-table (language)
-  "Return the syntax table used by the language.
+(defun speed-type--get-syntax-table (language)
+  "Return the syntax table used by LANGUAGE.
 
 The syntax table returned will depend on LANGUAGE, and nil is
 returned if no appropriate data could be found."
@@ -550,29 +554,48 @@ returned if no appropriate data could be found."
 	  ((boundp (intern keywords-att2)) (symbol-value (intern keywords-att2)))
 	  (t nil))))
 
-(defun speed-type--setup-syntax-table (language)
-  "Setup the syntax table in the current buffer for programming language LANGUAGE."
-  (let ((found-syntax-table (speed-type--get-language-syntax-table language)))
-    (if found-syntax-table
-	(set-syntax-table found-syntax-table)
-      (message "No appropriate syntax table could be found for: %s. If you find the correct syntax table for this language you can add it to the hash-table speed-type-syntax-tables. Alternatively, you may just need to load the language library, e.g. (require 'python)." language))))
+(defun speed-type--get-syntax-table-verbose (language)
+  "Return the syntax table used by LANGUAGE.
 
-(defun speed-type--setup-code (text language search-term &optional font-lock-kw)
-  "Speed type the code snippet TEXT of language LANGUAGE.
-If the user chooses to play again use SEARCH-TERM."
-  (let ((callback (lambda ()
-      (electric-pair-mode -1)
-      (local-set-key (kbd "TAB") 'speed-type-code-tab)
-      (local-set-key (kbd "RET") 'speed-type-code-ret)
-      (setq speed-type--programming-lan language)
-      (setq speed-type--search-term search-term)
-      (speed-type--setup-syntax-table language)
-      (let ((font-lock-data (or font-lock-kw (speed-type--get-language-code-keywords language))))
-	(if (or font-lock-kw (speed-type--get-language-code-keywords language))
-	    (let ((font-lock-defaults font-lock-data))
-	      (ignore-errors (font-lock-ensure)))  ; Fontify buffer
-	  (message "No syntax highlighting data could be found for: %s" language))))))
+The syntax table returned will depend on LANGUAGE.  If no appropriate
+syntax table could be found, this is messaged and nil is returned."
+  (let ((found-syntax-table (speed-type--get-syntax-table language)))
+    (if found-syntax-table
+        found-syntax-table
+      (message "No appropriate syntax table could be found for: %s. If you find the correct syntax table for this language you can add it to the hash-table speed-type-syntax-tables. Alternatively, you may just need to load the language library, e.g. (require 'python)." language)
+      nil)))
+
+(defun speed-type--setup-code
+    (text &optional replay-fn go-next-fn syntax-table font-lock-df)
+  "Speed type the code snippet TEXT.
+
+If specified, call REPLAY-FN after completion of a speed type session
+and replay is selected.  Similarly call GO-NEXT-FN after completion of
+a session if next is selected.
+
+For font highlighting, a syntax table can be specified by SYNTAX-TABLE,
+and font lock defaults by FONT-LOCK-DF."
+  (let ((callback
+         (lambda ()
+           (electric-pair-mode -1)
+           (local-set-key (kbd "TAB") 'speed-type-code-tab)
+           (local-set-key (kbd "RET") 'speed-type-code-ret)
+           (setq speed-type--replay-fn replay-fn)
+           (setq speed-type--go-next-fn go-next-fn)
+           (when syntax-table (set-syntax-table syntax-table))
+           (when font-lock-df
+             (let ((font-lock-defaults font-lock-df))
+               ;; Fontify buffer
+               (ignore-errors (font-lock-ensure)))))))
     (speed-type--setup text nil nil nil nil callback)))
+
+
+(defun speed-type--code-with-highlighting
+    (text &optional syntax-table font-lock-df go-next-fn)
+  (let ((replay-fn
+         (lambda (text) (speed-type--code-with-highlighting
+                         text syntax-table font-lock-df go-next-fn))))
+    (speed-type--setup-code text replay-fn go-next-fn syntax-table font-lock-df)))
 
 ;;;###autoload
 (defun speed-type-code-tab ()
@@ -606,18 +629,21 @@ If the user chooses to play again use SEARCH-TERM."
         (message "Language %s is not currently supported" language)
       (let ((code-results (speed-type--get-code-candidates-json language-id search-term)))
         (if code-results
-            (speed-type--setup-code
+            (speed-type--code-with-highlighting
              (speed-type--get-text-from-code-candidate (seq-random-elt code-results))
-             language search-term)
+             (speed-type--get-syntax-table-verbose language)
+             (speed-type--get-language-code-keywords language)
+             (lambda () (speed-type-code-search-term language search-term)))
           (message "No results found for %s using the search term '%s'" language search-term))))))
 
 ;;;###autoload
 (defun speed-type-code-region (start end)
   "Open copy of [START,END] in a new buffer to speed type the code."
   (interactive "r")
-  (speed-type--setup-code (buffer-substring-no-properties start end)
-                          "?"
-                          font-lock-keywords))
+  (speed-type--code-with-highlighting (buffer-substring-no-properties start end)
+                                      (syntax-table)
+                                      font-lock-defaults
+                                      nil))
 
 ;;;###autoload
 (defun speed-type-top-x (n)
